@@ -9,11 +9,21 @@ function(Symbols,src='yahoo',what, ...) {
   args <- list(Symbols=Symbols,...)
   if(!missing(what))
       args$what <- what
-  do.call(paste('getQuote',src,sep='.'), args)
+  do.call(paste('getQuote', src, sep='.'), args)
 }
 
-`getQuote.yahoo` <-
-function(Symbols,what=standardQuote(),...) {
+`getQuote.av` <-
+function(Symbols,what=NULL,...) {
+  #we really dont care what info, as it really always return the same stuff.
+  parameters <- as.list(substitute(list(...)))
+  if (!"api.key" %in% names(parameters))
+    stop(paste("api.key needed for executing av query"))
+  else
+    api.key<-parameters[["api.key"]]
+  if (!"interval" %in% names(parameters))
+    interval<-"1min"
+  else
+    interval<-parameters[["interval"]]
   tmp <- tempfile()
   on.exit(unlink(tmp))
   if(length(Symbols) > 1 && is.character(Symbols))
@@ -28,9 +38,9 @@ function(Symbols,what=standardQuote(),...) {
     df <- NULL
     cat("downloading set: ")
     for(i in 1:length(all.symbols)) {
-      Sys.sleep(0.5)
+      #Sys.sleep(0.5)
       cat(i,", ")
-      df <- rbind(df, getQuote.yahoo(all.symbols[[i]],what))
+      df <- rbind(df, getQuote.av(all.symbols[[i]]))
     }
     cat("...done\n")
     return(df)
@@ -45,20 +55,70 @@ function(Symbols,what=standardQuote(),...) {
   }
   QF <- paste('d1t1',QF,sep='')
   download.file(paste(
-                "https://finance.yahoo.com/d/quotes.csv?s=",
+                "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=",
                 Symbols,
-                "&f=",QF,sep=""),
+                "&f=",QF,"&datatype=csv&apikey=", api.key, "&interval=", interval, sep=""),
                 destfile=tmp,quiet=TRUE)
-  sq <- read.csv(file=tmp,sep=',',stringsAsFactors=FALSE,header=FALSE)
-  Qposix <- strptime(paste(sq[,1],sq[,2]),format='%m/%d/%Y %H:%M')
+  
+  sq <- read.csv(file=tmp,sep=',',stringsAsFactors=FALSE,header=TRUE)
+  timestamp <- strptime(paste(sq[,1],sq[,2]),format='%Y-%m-%d %H:%M:%S')
   Symbols <- unlist(strsplit(Symbols,'\\+'))
-  df <- data.frame(Qposix,sq[,3:NCOL(sq)])
-  rownames(df) <- Symbols
-  if(!is.null(QF.names)) {
-    colnames(df) <- c('Trade Time',QF.names)
-  }
+  df <- data.frame(timestamp,sq[,3:NCOL(sq)])
+  #rownames(df) <- Symbols
+  #if(!is.null(QF.names)) {
+  #  colnames(df) <- c('Trade Time',QF.names)
+  #}
+  df$symbol <- Symbols
   df
 }
+
+`getQuote.yahoo` <-
+  function(Symbols,what=standardQuote(),...) {
+    tmp <- tempfile()
+    on.exit(unlink(tmp))
+    if(length(Symbols) > 1 && is.character(Symbols))
+      Symbols <- paste(Symbols,collapse=";")
+    length.of.symbols <- length(unlist(strsplit(Symbols, ";")))
+    if(length.of.symbols > 200) {
+      # yahoo only works with 200 symbols or less per call
+      # we will recursively call getQuote.yahoo to handle each block of 200
+      Symbols <- unlist(strsplit(Symbols,";"))
+      all.symbols <- lapply(seq(1,length.of.symbols,200),
+                            function(x) na.omit(Symbols[x:(x+199)]))
+      df <- NULL
+      cat("downloading set: ")
+      for(i in 1:length(all.symbols)) {
+        Sys.sleep(0.5)
+        cat(i,", ")
+        df <- rbind(df, getQuote.yahoo(all.symbols[[i]],what))
+      }
+      cat("...done\n")
+      return(df)
+    }
+    Symbols <- paste(strsplit(Symbols,';')[[1]],collapse="+")
+    if(inherits(what, 'quoteFormat')) {
+      QF <- what[[1]]
+      QF.names <- what[[2]]
+    } else {
+      QF <- what
+      QF.names <- NULL
+    }
+    QF <- paste('d1t1',QF,sep='')
+    download.file(paste(
+      "https://finance.yahoo.com/d/quotes.csv?s=",
+      Symbols,
+      "&f=",QF,sep=""),
+      destfile=tmp,quiet=TRUE)
+    sq <- read.csv(file=tmp,sep=',',stringsAsFactors=FALSE,header=FALSE)
+    Qposix <- strptime(paste(sq[,1],sq[,2]),format='%m/%d/%Y %H:%M')
+    Symbols <- unlist(strsplit(Symbols,'\\+'))
+    df <- data.frame(Qposix,sq[,3:NCOL(sq)])
+    rownames(df) <- Symbols
+    if(!is.null(QF.names)) {
+      colnames(df) <- c('Trade Time',QF.names)
+    }
+    df
+  }
 
 
 # integrate this into the main getQuote.yahoo, after branching that
